@@ -310,8 +310,7 @@ static int f2fs_set_meta_page_dirty(struct page *page)
 	return 0;
 }
 
-static void f2fs_invalidate_meta_page(struct page *page, unsigned int offset,
-				      unsigned int length)
+static void f2fs_invalidate_meta_page(struct page *page, unsigned long offset)
 {
 	struct inode *inode = page->mapping->host;
 

@@ -105,6 +105,10 @@ enum {
 	CP_DISCARD,
 };
 
+#define DEF_BATCHED_TRIM_SECTIONS	32
+#define BATCHED_TRIM_SEGMENTS(sbi)	\
+		(SM_I(sbi)->trim_sections * (sbi)->segs_per_sec)
+
 struct cp_control {
 	int reason;
 	__u64 trim_start;
@@ -204,6 +208,14 @@ static inline bool __has_cursum_space(struct f2fs_summary_block *sum, int size,
 #define F2FS_IOC_GETFLAGS		FS_IOC_GETFLAGS
 #define F2FS_IOC_SETFLAGS		FS_IOC_SETFLAGS
 #define F2FS_IOC_GETVERSION		FS_IOC_GETVERSION
+#define FS_IOC_SHUTDOWN	_IOR('X', 125, __u32)	/* Shutdown */
+
+/*
+ * Flags for going down operation used by FS_IOC_GOINGDOWN
+ */
+#define FS_GOING_DOWN_FULLSYNC	0x0	/* going down with full sync */
+#define FS_GOING_DOWN_METASYNC	0x1	/* going down with metadata */
+#define FS_GOING_DOWN_NOSYNC	0x2	/* going down */
 
 #define F2FS_IOCTL_MAGIC		0xf5
 #define F2FS_IOC_START_ATOMIC_WRITE	_IO(F2FS_IOCTL_MAGIC, 1)
@@ -447,6 +459,9 @@ struct f2fs_sm_info {
 	struct list_head discard_list;		/* 4KB discard list */
 	int nr_discards;			/* # of discards in the list */
 	int max_discards;			/* max. discards to be issued */
+
+	/* for batched trimming */
+	int trim_sections;			/* # of sections to trim */
 
 	struct list_head sit_entry_set;	/* sit entry set list */
 
