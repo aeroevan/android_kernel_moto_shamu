@@ -1039,6 +1039,11 @@ static void dwc3_prepare_trbs(struct dwc3_ep *dep, bool starting)
 			struct scatterlist *sg = request->sg;
 			struct scatterlist *s;
 			int		i;
+			unsigned temp = 0;
+			unsigned len;
+			struct dwc3_request *nreq = n;
+			struct usb_request *ureq;
+			bool mpkt = false;
 
 			for_each_sg(sg, s, request->num_mapped_sgs, i) {
 				unsigned chain = true;
@@ -1050,6 +1055,10 @@ static void dwc3_prepare_trbs(struct dwc3_ep *dep, bool starting)
 						sg_is_last(s)) {
 					if (list_empty(&dep->request_list))
 						last_one = true;
+					temp = 0;
+					nreq = n;
+					mpkt = false;
+
 					chain = false;
 					if (last_req) {
 						last_one = true;
