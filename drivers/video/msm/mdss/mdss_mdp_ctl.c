@@ -1045,6 +1045,7 @@ static inline void mdss_mdp_ctl_perf_update_bus(struct mdss_data_type *mdata,
 			bw_vote_mode);
 
 	ATRACE_INT("bus_quota", bus_ib_quota);
+	trace_mdp_perf_update_bus(bus_ab_quota, bus_ib_quota);
 	mdss_bus_scale_set_quota(MDSS_HW_MDP, bus_ab_quota, bus_ib_quota);
 	pr_debug("ab=%llu ib=%llu mode=%d\n", bus_ab_quota, bus_ib_quota,
 		bw_vote_mode);
@@ -1096,6 +1097,7 @@ void mdss_mdp_ctl_perf_release_bw(struct mdss_mdp_ctl *ctl)
 		struct mdss_mdp_ctl *ctl_local =
 			mdss_mdp_get_main_ctl(ctl) ? : ctl;
 
+		trace_mdp_cmd_release_bw(ctl_local->num);
 		ctl_local->cur_perf.bw_ctl = 0;
 		ctl_local->new_perf.bw_ctl = 0;
 		pr_debug("Release BW ctl=%d\n", ctl_local->num);
@@ -1519,9 +1521,16 @@ static inline int mdss_mdp_set_split_ctl(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_ctl *split_ctl)
 {
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+	struct mdss_overlay_private *mdp5_data = NULL;
+	bool mixer_swap = false;
 
 	if (!ctl || !split_ctl || !mdata)
 		return -ENODEV;
+
+	if (ctl->mfd) {
+		mdp5_data = mfd_to_mdp5_data(ctl->mfd);
+		mixer_swap = mdp5_data->mixer_swap;
+	}
 
 	/* setup split ctl mixer as right mixer of original ctl so that
 	 * original ctl can work the same way as dual pipe solution */
@@ -1532,7 +1541,7 @@ static inline int mdss_mdp_set_split_ctl(struct mdss_mdp_ctl *ctl,
 	ctl->main_ctl = NULL;
 
 	if ((mdata->mdp_rev >= MDSS_MDP_HW_REV_103) && ctl->is_video_mode)
-		ctl->split_flush_en = true;
+		ctl->split_flush_en = !mixer_swap;
 
 	return 0;
 }
