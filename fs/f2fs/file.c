@@ -670,16 +670,16 @@ int f2fs_setattr(struct dentry *dentry, struct iattr *attr)
 				f2fs_get_encryption_info(inode))
 			return -EACCES;
 
-		if (attr->ia_size != i_size_read(inode)) {
+		if (attr->ia_size <= i_size_read(inode)) {
 			truncate_setsize(inode, attr->ia_size);
 			f2fs_truncate(inode);
 			f2fs_balance_fs(F2FS_I_SB(inode));
 		} else {
 			/*
-			 * giving a chance to truncate blocks past EOF which
-			 * are fallocated with FALLOC_FL_KEEP_SIZE.
+			 * do not trim all blocks after i_size if target size is
+			 * larger than i_size.
 			 */
-			f2fs_truncate(inode);
+			truncate_setsize(inode, attr->ia_size);
 		}
 	}
 
@@ -1413,11 +1413,9 @@ static int f2fs_ioc_abort_volatile_write(struct file *filp)
 		clear_inode_flag(F2FS_I(inode), FI_ATOMIC_FILE);
 	}
 
-	if (f2fs_is_volatile_file(inode)) {
+	if (f2fs_is_volatile_file(inode))
 		clear_inode_flag(F2FS_I(inode), FI_VOLATILE_FILE);
-		filemap_fdatawrite(inode->i_mapping);
-		set_inode_flag(F2FS_I(inode), FI_VOLATILE_FILE);
-	}
+
 	mnt_drop_write_file(filp);
 	return ret;
 }
@@ -1552,7 +1550,7 @@ static int f2fs_ioc_get_encryption_pwsalt(struct file *filp, unsigned long arg)
 	/* update superblock with uuid */
 	generate_random_uuid(sbi->raw_super->encrypt_pw_salt);
 
-	err = f2fs_commit_super(sbi);
+	err = f2fs_commit_super(sbi, false);
 
 	mnt_drop_write_file(filp);
 	if (err) {
