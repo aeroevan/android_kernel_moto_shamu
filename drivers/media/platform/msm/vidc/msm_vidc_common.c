@@ -77,6 +77,18 @@ static inline bool is_thumbnail_session(struct msm_vidc_inst *inst)
 	return false;
 }
 
+static inline bool is_non_realtime_session(struct msm_vidc_inst *inst)
+{
+	int rc = 0;
+	struct v4l2_control ctrl = {
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_PRIORITY
+		};
+	rc = v4l2_g_ctrl(&inst->ctrl_handler, &ctrl);
+	if (!rc && ctrl.value)
+		return true;
+	return false;
+}
+
 enum multi_stream msm_comm_get_stream_output_mode(struct msm_vidc_inst *inst)
 {
 	if (inst->session_type == MSM_VIDC_DECODER) {
@@ -89,9 +101,8 @@ enum multi_stream msm_comm_get_stream_output_mode(struct msm_vidc_inst *inst)
 			return HAL_VIDEO_DECODER_SECONDARY;
 	}
 	return HAL_VIDEO_DECODER_PRIMARY;
-
-
 }
+
 static int msm_comm_get_mbs_per_sec(struct msm_vidc_inst *inst)
 {
 	int height, width;
@@ -133,14 +144,16 @@ enum load_calc_quirks {
 	LOAD_CALC_NO_QUIRKS = 0,
 	LOAD_CALC_IGNORE_TURBO_LOAD = 1 << 0,
 	LOAD_CALC_IGNORE_THUMBNAIL_LOAD = 1 << 1,
+	LOAD_CALC_IGNORE_NON_REALTIME_LOAD = 1 << 2,
 };
 
 static int msm_comm_get_inst_load(struct msm_vidc_inst *inst,
 		enum load_calc_quirks quirks)
 {
 	int load = 0;
+
 	if (!(inst->state >= MSM_VIDC_OPEN_DONE &&
-			inst->state < MSM_VIDC_STOP_DONE))
+		inst->state < MSM_VIDC_STOP_DONE))
 		return 0;
 
 	load = msm_comm_get_mbs_per_sec(inst);
@@ -155,6 +168,12 @@ static int msm_comm_get_inst_load(struct msm_vidc_inst *inst,
 			load = inst->core->resources.max_load;
 	}
 
+	if ((is_non_realtime_session(inst)) &&
+		(quirks & LOAD_CALC_IGNORE_NON_REALTIME_LOAD)) {
+		load = msm_comm_get_mbs_per_sec(inst)/inst->prop.fps;
+		dprintk(VIDC_DBG, "NON REALTIME Session so load is: %d", load);
+	} else
+		dprintk(VIDC_DBG, "REALTIME Session so load is: %d", load);
 	return load;
 }
 
@@ -629,6 +648,8 @@ static void handle_session_init_done(enum command_response cmd, void *data)
 			inst->capability.capability_set = true;
 			inst->capability.buffer_mode[CAPTURE_PORT] =
 				session_init_done->alloc_mode_out;
+			inst->capability.secure_output2_threshold =
+				session_init_done->secure_output2_threshold;
 		} else {
 			dprintk(VIDC_ERR,
 				"Session init response from FW : 0x%x\n",
@@ -758,8 +779,16 @@ static void handle_event_change(enum command_response cmd, void *data)
 		}
 		msm_comm_init_dcvs_load(inst);
 		rc = msm_vidc_check_session_supported(inst);
-		if (!rc)
+		if (!rc) {
 			msm_vidc_queue_v4l2_event(inst, event);
+		} else if (rc == -ENOTSUPP) {
+			msm_vidc_queue_v4l2_event(inst,
+				V4L2_EVENT_MSM_VIDC_HW_UNSUPPORTED);
+		} else if (rc == -EBUSY) {
+			msm_vidc_queue_v4l2_event(inst,
+				V4L2_EVENT_MSM_VIDC_HW_OVERLOAD);
+		}
+
 		return;
 	} else {
 		dprintk(VIDC_ERR,
@@ -1378,6 +1407,10 @@ static void handle_fbd(enum command_response cmd, void *data)
 		vb->v4l2_planes[0].reserved[3] = fill_buf_done->start_y_coord;
 		vb->v4l2_planes[0].reserved[4] = fill_buf_done->frame_width;
 		vb->v4l2_planes[0].reserved[5] = fill_buf_done->frame_height;
+		vb->v4l2_planes[0].reserved[6] =
+			inst->prop.width[CAPTURE_PORT];
+		vb->v4l2_planes[0].reserved[7] =
+			inst->prop.height[CAPTURE_PORT];
 		if (vb->v4l2_planes[0].data_offset > vb->v4l2_planes[0].length)
 			dprintk(VIDC_INFO,
 				"fbd:Overflow data_offset = %d; length = %d\n",
@@ -2210,7 +2243,7 @@ static int msm_vidc_load_resources(int flipped_state,
 	int num_mbs_per_sec = 0;
 	struct msm_vidc_core *core;
 	enum load_calc_quirks quirks = LOAD_CALC_IGNORE_TURBO_LOAD |
-		LOAD_CALC_IGNORE_THUMBNAIL_LOAD;
+		LOAD_CALC_IGNORE_THUMBNAIL_LOAD | LOAD_CALC_IGNORE_NON_REALTIME_LOAD;
 
 	if (!inst || !inst->core || !inst->core->device) {
 		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
@@ -3833,7 +3866,7 @@ static int msm_vidc_load_supported(struct msm_vidc_inst *inst)
 {
 	int num_mbs_per_sec = 0;
 	enum load_calc_quirks quirks = LOAD_CALC_IGNORE_TURBO_LOAD |
-		LOAD_CALC_IGNORE_THUMBNAIL_LOAD;
+		LOAD_CALC_IGNORE_THUMBNAIL_LOAD | LOAD_CALC_IGNORE_NON_REALTIME_LOAD;
 
 	if (inst->state == MSM_VIDC_OPEN_DONE) {
 		num_mbs_per_sec = msm_comm_get_load(inst->core,
@@ -3846,7 +3879,7 @@ static int msm_vidc_load_supported(struct msm_vidc_inst *inst)
 				num_mbs_per_sec,
 				inst->core->resources.max_load);
 			msm_vidc_print_running_insts(inst->core);
-			return -EINVAL;
+			return -EBUSY;
 		}
 	}
 	return 0;
@@ -4007,6 +4040,12 @@ int msm_vidc_check_session_supported(struct msm_vidc_inst *inst)
 	capability = &inst->capability;
 	hdev = inst->core->device;
 	rc = msm_vidc_load_supported(inst);
+	if (rc) {
+		change_inst_state(inst, MSM_VIDC_CORE_INVALID);
+		dprintk(VIDC_WARN,
+			"%s: Hardware is overloaded\n", __func__);
+		return rc;
+	}
 	if (!rc && inst->capability.capability_set) {
 		rc = call_hfi_op(hdev, capability_check,
 			inst->fmts[OUTPUT_PORT]->fourcc,
@@ -4026,11 +4065,8 @@ int msm_vidc_check_session_supported(struct msm_vidc_inst *inst)
 	}
 	if (rc) {
 		change_inst_state(inst, MSM_VIDC_CORE_INVALID);
-		msm_vidc_queue_v4l2_event(inst,
-					V4L2_EVENT_MSM_VIDC_HW_OVERLOAD);
-		dprintk(VIDC_WARN,
-			"%s: Hardware is overloaded\n", __func__);
-		wake_up(&inst->kernel_event_queue);
+		dprintk(VIDC_ERR,
+			"%s: Resolution unsupported\n", __func__);
 	}
 	return rc;
 }

@@ -434,7 +434,7 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 
 	ret = scnprintf(buf, PAGE_SIZE,
 			"pu_en=%d\nxstart=%d\nwalign=%d\nystart=%d\nhalign=%d\n"
-			"min_w=%d\nmin_h=%d\nroi_merge=%d",
+			"min_w=%d\nmin_h=%d\nroi_merge=%d\n",
 			pinfo->partial_update_enabled, pinfo->xstart_pix_align,
 			pinfo->width_pix_align, pinfo->ystart_pix_align,
 			pinfo->height_pix_align, pinfo->min_width,
@@ -3082,4 +3082,15 @@ int mdss_fb_suspres_panel(struct device *dev, void *data)
 			event == MDSS_EVENT_RESUME ? "resume" : "suspend",
 			mfd->index, rc);
 	return rc;
+}
+
+void mdss_fb_send_panel_reset_event(struct msm_fb_data_type *mfd)
+{
+	char *envp[2] = {"PANEL_ALIVE=0", NULL};
+	if (!mfd)
+		return;
+
+	mfd->panel_info->panel_dead = true;
+	kobject_uevent_env(&mfd->fbi->dev->kobj, KOBJ_CHANGE, envp);
+	pr_err("sending uevent - %s from %pS\n", envp[0], __builtin_return_address(0));
 }
